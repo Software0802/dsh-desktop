@@ -27,3 +27,17 @@ This repository owns the desktop product around an unmodified DeepSeek Harness c
 - Keep graphical application launch explicit. Builds, typechecks, unit tests, and Loader smokes must remain headless-safe.
 - Commit before major changes of direction and keep the submodule pin update separate from desktop behavior changes.
 - Keep the repository topology and package-manager split consistent with the [owning Agent Note](.agents/notes/implemented/process/2026-08-15-pinned-upstream-and-isolated-yarn-workspace.md).
+
+## Pi Desk DSH Integration
+
+This repository also contains the independent Pi-powered client under `pi-desktop/` and the existing Python self-improving loop under `pi_agent/`. They are project-owned additions; the original DSH Desktop remains the reference product and its upstream Harness checkout remains unmodified.
+
+- Pi is the agent kernel for `pi-desktop`; integrate it through documented RPC or SDK interfaces and never modify Pi core.
+- `pi-desktop/` is an isolated npm workspace. Do not merge its npm dependency tree into the DSH Yarn workspace or import Electron/Node APIs into Renderer code.
+- `pi_agent/` keeps its human-approval, version-conflict, backup, and JSONL audit guarantees. Do not add a second approval path or execute arbitrary Skill code.
+- Pi-native Extensions and `SKILL.md` Skills may use the native path. DSH UI plugins are not Pi plugins and must remain explicitly marked as `adapter` or `isolated` until a tested compatibility runtime exists.
+- `aiskill.market` is only a verified integration after its catalog and install protocol are confirmed. A starter catalog or external link must not be described as a live installer.
+- Do not edit `deepseek-harness/` for Pi Desk DSH work. Keep the DSH submodule pin unchanged unless the task explicitly targets an upstream update.
+- Pi Desk DSH integration changes are developed on branch `pi-desk-dsh`; do not push them directly to `master` and do not force-push.
+- The current state and next move live in `docs/handoff/`. Update the newest dated handoff when implementation status, blockers, verification, or scope changes.
+- The integration boundary includes `pi-desktop/`, `pi_agent/`, `README.pi-desk-dsh.md`, `docs/handoff/`, and the related root ignore/README links. Do not stage generated files, local state, secrets, or unrelated DSH changes.

@@ -84,6 +84,10 @@ DSH Desktop 将 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harne
 | 了解桌面应用如何工作 | [架构说明](docs/architecture.md) |
 | 查阅包级构建与发布细节 | [`dsh-plugin-desktop/README.md`](dsh-plugin-desktop/README.md) |
 
+### Pi Desk DSH 集成
+
+本仓库的 `pi-desk-dsh` 分支还包含独立的 Pi Desktop 客户端和原有 Python 自进化 Agent MVP；它们不修改 DeepSeek Harness 子模块。详见 [Pi Desk DSH 项目说明](README.pi-desk-dsh.md) 与 [会话交接目录](docs/handoff/README.md)。
+
 ## 主要功能
 
 <table>

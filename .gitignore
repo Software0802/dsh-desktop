@@ -14,3 +14,11 @@ dsh-plugin-desktop/lib/
 dsh-community-market/lib/
 
 .env.yarn
+
+# Pi Desk DSH additions
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pi-agent-local/
+pi-desktop/dist/
+pi-desktop/dist-electron/

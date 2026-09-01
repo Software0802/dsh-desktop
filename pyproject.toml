@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pi-agent"
+version = "0.1.0"
+description = "A local, human-approved self-improving agent loop"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.scripts]
+pi-agent = "pi_agent.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["pi_agent*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
