@@ -15,7 +15,12 @@ Build an independent desktop client with a DSH-inspired UI, Pi as the agent kern
 - Researched the DSH Desktop Electron shell, three-panel layout, sidebar market action, market overlay, and upstream conversation UI.
 - Selected `Software0802/dsh-desktop` as the target repository and kept its existing DSH source and `deepseek-harness` submodule intact.
 - Added the independent `pi-desktop/` Electron + React + TypeScript application.
-- Added the DSH-inspired desktop layout: sidebar, session list, conversation surface, composer, details panel, settings view, and responsive narrow layout.
+- Restored the DeepSeek Harness desktop chrome in `pi-desktop/` without copying the DSH/Cordis kernel:
+  - Official fish logo path and `deepseek` + HARNESS wordmark.
+  - Dark-theme DSH tokens (`#151517` base, `#1b1b1c` sidebar, DeepSeek blue send control).
+  - Sidebar: 新会话, 工作区 tree, 插件市场, 设置; details panel closed by default.
+  - Empty session hero: 探索未至之境 / 预览版 and the 22px composer card.
+  - Chat: 对话 / 轨迹 tabs, right-aligned user bubble, left assistant text.
 - Added Pi JSONL RPC integration in `pi-desktop/src/main.ts`:
   - Starts `pi --mode rpc` lazily on the first prompt.
   - Sends `prompt` commands with request IDs.
@@ -88,14 +93,26 @@ Passed in the project root:
 python -m pytest           # 2 passed
 ```
 
-The outer directory rename was verified with the old path absent and the new path present.
+Passed after the DeepSeek UI restore (`pi-desktop/`):
 
-The target repository was clean before this integration; the `deepseek-harness` submodule remains unchanged.
+```text
+npm install
+npm run typecheck
+npm run build
+npx vite --host 127.0.0.1 --port 5173
+```
+
+Browser check of the renderer (offline preview, no Electron/Pi process):
+
+- Empty hero: `deepseek` + HARNESS, 新会话, 工作区, 探索未至之境 / 预览版, round blue send.
+- 插件市场 and 设置 overlays open and close without the previous lime accent.
+- Sending `你好` switches to chat: right-aligned user bubble, 对话 / 轨迹 tabs, offline assistant reply.
+- Sidebar collapse to the rail, then 新会话 returns to the hero.
 
 Still not run for this slice:
 
 - Live Pi prompt with a configured provider/API key.
-- Full Electron UI interaction test.
+- Full Electron window chrome (title-bar overlay) on Windows/macOS.
 
 ## Intentionally Untouched
 
@@ -107,4 +124,4 @@ Still not run for this slice:
 
 ## Next Move
 
-Implement durable Pi session state and event projection first. Then replace the starter market catalog with a verified `aiskill.market` adapter, keeping DSH UI plugin execution explicitly behind an adapter or isolated-host boundary.
+Keep Pi session persistence as Priority 1. The desktop chrome now follows DeepSeek Harness; do not restyle it toward a custom editorial theme. After durable sessions, replace the starter market catalog with a verified `aiskill.market` adapter, keeping DSH UI plugin execution behind an adapter or isolated-host boundary.

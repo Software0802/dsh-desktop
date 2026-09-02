@@ -136,9 +136,10 @@ function createWindow(): void {
     height: 900,
     minWidth: 900,
     minHeight: 620,
-    backgroundColor: '#171717',
+    backgroundColor: '#151517',
+    title: 'deepseek',
     titleBarStyle: 'hidden',
-    titleBarOverlay: { color: '#171717', symbolColor: '#a1a1aa', height: 36 },
+    titleBarOverlay: { color: '#151517', symbolColor: '#f9fafb', height: 36 },
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,

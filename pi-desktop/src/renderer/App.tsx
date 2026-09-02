@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { FormEvent, ReactNode } from 'react'
+import type { FormEvent } from 'react'
 import {
   AISKILL_MARKET_URL,
   starterMarketItems,
@@ -7,132 +7,422 @@ import {
   type PiRpcEvent,
   type PiStatus,
 } from '../shared/types.js'
+import {
+  BrandWordmark,
+  FishLogo,
+  IconArrowUp,
+  IconCheck,
+  IconCopy,
+  IconDownload,
+  IconExternal,
+  IconFilter,
+  IconFolder,
+  IconFolderPlus,
+  IconGrid,
+  IconPanelLeft,
+  IconPlus,
+  IconPlusCircle,
+  IconRefresh,
+  IconSearch,
+  IconSettings,
+  IconShield,
+  IconThumbsDown,
+  IconThumbsUp,
+  IconTrash,
+  IconX,
+} from './icons.js'
 
-type View = 'chat' | 'market' | 'settings'
+type Overlay = 'market' | 'settings' | null
+type ChatTab = 'chat' | 'trajectory'
 type Message = { readonly id: string; readonly role: 'user' | 'assistant'; readonly text: string }
-
-const initialMessages: readonly Message[] = [
-  {
-    id: 'welcome',
-    role: 'assistant',
-    text: 'Pi is ready to work with you. Ask for a change, a review, or a plan for the next step.',
-  },
-]
-
-function Glyph({ name, size = 17 }: { readonly name: string; readonly size?: number }) {
-  const paths: Record<string, ReactNode> = {
-    plus: <path d="M8 3v10M3 8h10" />,
-    chat: <path d="M3 3.5h10v7H7l-3.5 2v-2H3z" />,
-    box: <path d="m8 2 5 2.5v7L8 14l-5-2.5v-7zM3 4.5 8 7l5-2.5M8 7v7" />,
-    search: <><circle cx="7" cy="7" r="4" /><path d="m10 10 3 3" /></>,
-    settings: <><circle cx="8" cy="8" r="2.3" /><path d="M8 2v1.2M8 12.8V14M2 8h1.2M12.8 8H14M3.8 3.8l.85.85M11.35 11.35l.85.85M12.2 3.8l-.85.85M4.65 11.35l-.85.85" /></>,
-    panel: <path d="M3 3h10v10H3zM5.5 3v10" />,
-    send: <path d="m3 3 10 5-10 5 2-5zM5 8h8" />,
-    chevron: <path d="m5 6 3 3 3-3" />,
-    dots: <><circle cx="4" cy="8" r=".7" fill="currentColor" stroke="none" /><circle cx="8" cy="8" r=".7" fill="currentColor" stroke="none" /><circle cx="12" cy="8" r=".7" fill="currentColor" stroke="none" /></>,
-    external: <><path d="M9 3h4v4M13 3 7.5 8.5" /><path d="M11 8v3.5h-6v-6H8" /></>,
-    close: <path d="m4 4 8 8M12 4l-8 8" />,
-    bolt: <path d="m9 2-5 7h3l-1 5 5-7H8z" />,
-    folder: <path d="M2.5 4.5h4l1.2 1.4h5.8v6.6h-11z" />,
-  }
-  return (
-    <svg className="glyph" width={size} height={size} viewBox="0 0 16 16" fill="none" aria-hidden="true">
-      {paths[name]}
-    </svg>
-  )
+type Session = {
+  readonly id: string
+  readonly title: string
+  readonly messages: readonly Message[]
+  readonly updatedAt: number
 }
 
-function Logo({ compact = false }: { readonly compact?: boolean }) {
+const WORKSPACE = 'dsh'
+
+function newSessionId(): string {
+  return `session-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`
+}
+
+function emptySession(): Session {
+  return { id: newSessionId(), title: '新会话', messages: [], updatedAt: Date.now() }
+}
+
+function statusLabel(status: PiStatus): string {
+  if (status.state === 'ready') return 'Pi 已连接'
+  if (status.state === 'starting') return '正在启动 Pi'
+  if (status.state === 'error') return 'Pi 不可用'
+  return '离线预览'
+}
+
+function timeLabel(updatedAt: number): string {
+  const delta = Date.now() - updatedAt
+  if (delta < 60_000) return '刚刚'
+  if (delta < 3_600_000) return `${Math.floor(delta / 60_000)} 分钟前`
+  return '今天'
+}
+
+function titleFromPrompt(text: string): string {
+  const line = text.trim().split('\n')[0] ?? '新会话'
+  return line.length > 18 ? `${line.slice(0, 18)}…` : line
+}
+
+export function App() {
+  const [collapsed, setCollapsed] = useState(false)
+  const [overlay, setOverlay] = useState<Overlay>(null)
+  const [tab, setTab] = useState<ChatTab>('chat')
+  const [draft, setDraft] = useState('')
+  const [running, setRunning] = useState(false)
+  const [query, setQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [status, setStatus] = useState<PiStatus>({ state: 'offline' })
+  const [seed] = useState(emptySession)
+  const [sessions, setSessions] = useState<readonly Session[]>([seed])
+  const [activeId, setActiveId] = useState(seed.id)
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+  const [liked, setLiked] = useState<Readonly<Record<string, 'up' | 'down'>>>({})
+
+  const active = sessions.find((session) => session.id === activeId) ?? sessions[0]
+  const messages = active?.messages ?? []
+  const isHero = messages.length === 0
+
+  useEffect(() => {
+    if (window.pi === undefined) return
+    void window.pi.getStatus().then(setStatus)
+    return window.pi.onEvent((event) => handlePiEvent(event, setSessions, activeId, setRunning, setStatus))
+  }, [activeId])
+
+  const visibleSessions = useMemo(
+    () => sessions.filter((session) => session.title.toLowerCase().includes(query.trim().toLowerCase())),
+    [query, sessions],
+  )
+
+  const createSession = (): void => {
+    const session = emptySession()
+    setSessions((current) => [session, ...current])
+    setActiveId(session.id)
+    setDraft('')
+    setTab('chat')
+    setOverlay(null)
+  }
+
+  const selectSession = (id: string): void => {
+    setActiveId(id)
+    setTab('chat')
+    setOverlay(null)
+  }
+
+  const removeSession = (id: string): void => {
+    setSessions((current) => {
+      const next = current.filter((session) => session.id !== id)
+      const fallback = next[0] ?? emptySession()
+      if (next.length === 0) {
+        setActiveId(fallback.id)
+        return [fallback]
+      }
+      if (id === activeId) setActiveId(fallback.id)
+      return next
+    })
+  }
+
+  const patchActive = (update: (session: Session) => Session): void => {
+    setSessions((current) => current.map((session) => (session.id === activeId ? update(session) : session)))
+  }
+
+  const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
+    event.preventDefault()
+    const text = draft.trim()
+    if (text === '' || running || active === undefined) return
+    setDraft('')
+    setTab('chat')
+    patchActive((session) => ({
+      ...session,
+      title: session.messages.length === 0 ? titleFromPrompt(text) : session.title,
+      messages: [...session.messages, { id: `user-${Date.now()}`, role: 'user', text }],
+      updatedAt: Date.now(),
+    }))
+    setRunning(true)
+    if (window.pi === undefined) {
+      patchActive((session) => ({
+        ...session,
+        messages: [...session.messages, {
+          id: `offline-${Date.now()}`,
+          role: 'assistant',
+          text: '当前是预览模式。启动 Electron 应用并配置 Pi 后即可发送真实请求。',
+        }],
+        updatedAt: Date.now(),
+      }))
+      setRunning(false)
+      return
+    }
+    const result = await window.pi.prompt(text)
+    setStatus(await window.pi.getStatus())
+    if (!result.accepted) {
+      patchActive((session) => ({
+        ...session,
+        messages: [...session.messages, { id: `error-${Date.now()}`, role: 'assistant', text: result.error ?? 'Pi 拒绝了这次请求。' }],
+        updatedAt: Date.now(),
+      }))
+      setRunning(false)
+    }
+  }
+
+  const copyMessage = async (message: Message): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(message.text)
+      setCopiedId(message.id)
+      window.setTimeout(() => setCopiedId(null), 1200)
+    } catch {
+      setCopiedId(null)
+    }
+  }
+
+  const regenerate = (): void => {
+    const lastUser = [...messages].reverse().find((message) => message.role === 'user')
+    if (lastUser === undefined || running) return
+    setDraft(lastUser.text)
+  }
+
   return (
-    <div className={`brand ${compact ? 'brand-compact' : ''}`}>
-      <span className="brand-mark"><Glyph name="bolt" size={18} /></span>
-      {!compact && <span className="brand-copy"><strong>Pi</strong><small>DESKTOP</small></span>}
+    <div className="app-shell">
+      <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
+        <div className="logo-row">
+          <button className="brand" type="button" onClick={createSession} aria-label="deepseek">
+            {collapsed ? <FishLogo size={24} /> : <BrandWordmark size={18} />}
+          </button>
+          <button className="icon-button toggle" type="button" aria-label={collapsed ? '展开侧栏' : '收起侧栏'} onClick={() => setCollapsed((value) => !value)}>
+            {collapsed ? <FishLogo size={22} /> : <IconPanelLeft size={16} />}
+          </button>
+        </div>
+        <button className="new-session" type="button" onClick={createSession}>
+          <IconPlusCircle size={16} />
+          <span className="new-session-label">新会话</span>
+        </button>
+        <div className="workspace-area">
+          <div className="section-header">
+            <span className="section-label">工作区</span>
+            {searchOpen ? (
+              <input
+                className="workspace-search open"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="搜索会话"
+                aria-label="搜索会话"
+                autoFocus
+                onBlur={() => { if (query.trim() === '') setSearchOpen(false) }}
+              />
+            ) : (
+              <button className="icon-button" type="button" aria-label="搜索" onClick={() => setSearchOpen(true)}><IconSearch size={16} /></button>
+            )}
+            <button className="icon-button" type="button" aria-label="筛选"><IconFilter size={16} /></button>
+            <button className="icon-button" type="button" aria-label="新建文件夹"><IconFolderPlus size={16} /></button>
+          </div>
+          <div className="tree">
+            <div className="project-row">
+              <span className="folder-icon active"><IconFolder size={16} /></span>
+              <span className="row-title">{WORKSPACE}</span>
+            </div>
+            {visibleSessions.map((session) => (
+              <div
+                key={session.id}
+                className={`session-row ${session.id === activeId ? 'selected' : ''}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => selectSession(session.id)}
+                onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); selectSession(session.id) } }}
+              >
+                <span className="row-title">{session.title}</span>
+                <span className="row-time">{timeLabel(session.updatedAt)}</span>
+                <button
+                  className="icon-button row-delete"
+                  type="button"
+                  aria-label="删除会话"
+                  onClick={(event) => { event.stopPropagation(); removeSession(session.id) }}
+                >
+                  <IconTrash size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+        <div className="foot-area">
+          <button className={`foot-action ${overlay === 'market' ? 'selected' : ''}`} type="button" onClick={() => setOverlay('market')}>
+            <IconGrid size={16} /><span>插件市场</span>
+          </button>
+          <button className={`foot-action ${overlay === 'settings' ? 'selected' : ''}`} type="button" onClick={() => setOverlay('settings')}>
+            <IconSettings size={16} /><span>设置</span>
+          </button>
+        </div>
+      </aside>
+
+      <main className="conversation">
+        {!isHero && (
+          <header className="conv-header">
+            <div className="title-row">
+              <span className="session-title">{active?.title ?? '新会话'}</span>
+              <span className="mode-chip">标准模式</span>
+              <div className="header-actions">
+                <button className="icon-button" type="button" aria-label="导出会话"><IconDownload size={16} /></button>
+              </div>
+            </div>
+            <div className="tabs">
+              <button className={`tab ${tab === 'chat' ? 'active' : ''}`} type="button" onClick={() => setTab('chat')}>对话</button>
+              <button className={`tab ${tab === 'trajectory' ? 'active' : ''}`} type="button" onClick={() => setTab('trajectory')}>轨迹</button>
+            </div>
+          </header>
+        )}
+
+        <div className={`conv-body`}>
+          <div className={`scroll-body ${isHero ? 'hero-phase' : ''}`}>
+            {isHero ? (
+              <div className="hero">
+                <div className="hero-stack">
+                  <div className="headline">
+                    <span className="fish-hitbox"><FishLogo className="hero-fish" size={34} /></span>
+                    <span>探索未至之境</span>
+                    <span className="preview-badge">预览版</span>
+                  </div>
+                  <div className="hero-chips">
+                    <button className="chip" type="button"><IconFolder size={14} /><span>{WORKSPACE}</span><span className="muted">▾</span></button>
+                    <button className="chip" type="button"><span>标准模式</span><span className="muted">▾</span></button>
+                  </div>
+                  <Composer
+                    hero
+                    draft={draft}
+                    setDraft={setDraft}
+                    running={running}
+                    onSubmit={submit}
+                    placeholder="描述你想要构建的内容… / 调用指令 @ 文件或对话"
+                  />
+                </div>
+              </div>
+            ) : (
+              <>
+                {tab === 'chat' ? (
+                  <div className="chat-scroll">
+                    <div className="chat-column">
+                      {messages.map((message) => (
+                        message.role === 'user' ? (
+                          <article key={message.id} className="user-row"><div className="bubble">{message.text}</div></article>
+                        ) : (
+                          <article key={message.id} className="assistant-row">
+                            <div className="assistant-text">{message.text}</div>
+                            <div className="message-actions">
+                              <button type="button" aria-label="重新生成" onClick={regenerate}><IconRefresh size={14} /></button>
+                              <button type="button" className={liked[message.id] === 'up' ? 'on' : ''} aria-label="点赞" onClick={() => setLiked((current) => ({ ...current, [message.id]: 'up' }))}><IconThumbsUp size={14} /></button>
+                              <button type="button" className={liked[message.id] === 'down' ? 'on' : ''} aria-label="点踩" onClick={() => setLiked((current) => ({ ...current, [message.id]: 'down' }))}><IconThumbsDown size={14} /></button>
+                              <button type="button" aria-label="复制" onClick={() => void copyMessage(message)}>
+                                {copiedId === message.id ? <IconCheck size={14} /> : <IconCopy size={14} />}
+                              </button>
+                            </div>
+                          </article>
+                        )
+                      ))}
+                      {running && <div className="thinking">正在生成…</div>}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="trajectory">
+                    {messages.length === 0 ? (
+                      <div className="trajectory-empty">本会话还没有轨迹。</div>
+                    ) : messages.map((message, index) => (
+                      <div key={message.id} className="turn">
+                        <span className="turn-role">{message.role === 'user' ? `用户 ${index + 1}` : '助手'}</span>
+                        <span className="turn-text">{message.text}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="composer-seat">
+                  <Composer
+                    draft={draft}
+                    setDraft={setDraft}
+                    running={running}
+                    onSubmit={submit}
+                    placeholder="发消息或做任务… / 调用指令 @ 文件或对话"
+                  />
+                  <div className="stats">
+                    {messages.filter((message) => message.role === 'user').length} 轮
+                    <span className="sep">·</span>
+                    Pi RPC
+                    <span className="sep">·</span>
+                    {statusLabel(status)}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      </main>
+
+      {overlay === 'market' && <MarketView onClose={() => setOverlay(null)} />}
+      {overlay === 'settings' && <SettingsView status={status} onClose={() => setOverlay(null)} />}
     </div>
   )
 }
 
-function StatusPill({ status }: { readonly status: PiStatus }) {
-  const label = status.state === 'ready' ? 'Pi connected' : status.state === 'starting' ? 'Starting Pi' : status.state === 'error' ? 'Pi unavailable' : 'Offline preview'
-  return <span className={`status-pill status-${status.state}`}><span className="status-dot" />{label}</span>
-}
-
-function Sidebar({ view, setView, onNewSession }: { readonly view: View; readonly setView: (view: View) => void; readonly onNewSession: () => void }) {
-  return (
-    <aside className="sidebar">
-      <div className="sidebar-top">
-        <Logo />
-        <button className="icon-button" type="button" aria-label="Collapse sidebar"><Glyph name="panel" /></button>
-      </div>
-      <button className="new-session" type="button" onClick={onNewSession}><Glyph name="plus" size={15} /><span>New session</span><kbd>Ctrl N</kbd></button>
-      <div className="sidebar-section-label">Workspace</div>
-      <nav className="session-list" aria-label="Sessions">
-        <button className="session-item active" type="button" onClick={() => setView('chat')}>
-          <span className="session-icon"><Glyph name="chat" size={15} /></span>
-          <span className="session-text"><strong>Getting started</strong><small>Just now</small></span>
-          <Glyph name="dots" size={16} />
-        </button>
-        <button className="session-item" type="button" onClick={() => setView('chat')}>
-          <span className="session-icon session-icon-muted"><Glyph name="chat" size={15} /></span>
-          <span className="session-text"><strong>Self-improving loop</strong><small>Yesterday</small></span>
-        </button>
-      </nav>
-      <div className="sidebar-spacer" />
-      <div className="sidebar-footer">
-        <button className={`footer-action ${view === 'market' ? 'selected' : ''}`} type="button" onClick={() => setView('market')}><span className="market-icon"><Glyph name="box" size={16} /></span><span>Plugin market</span><span className="market-count">4</span></button>
-        <button className={`footer-action ${view === 'settings' ? 'selected' : ''}`} type="button" onClick={() => setView('settings')}><Glyph name="settings" size={16} /><span>Settings</span></button>
-      </div>
-    </aside>
-  )
-}
-
-function Conversation({ messages, running, draft, setDraft, onSubmit, onOpenMarket }: {
-  readonly messages: readonly Message[]
-  readonly running: boolean
+function Composer({
+  hero = false,
+  draft,
+  setDraft,
+  running,
+  onSubmit,
+  placeholder,
+}: {
+  readonly hero?: boolean
   readonly draft: string
   readonly setDraft: (value: string) => void
+  readonly running: boolean
   readonly onSubmit: (event: FormEvent<HTMLFormElement>) => void
-  readonly onOpenMarket: () => void
+  readonly placeholder: string
 }) {
   return (
-    <main className="conversation">
-      <header className="conversation-header">
-        <div className="conversation-title"><span className="live-mark" /><strong>Getting started</strong><button className="title-chevron" type="button" aria-label="Session options"><Glyph name="chevron" size={14} /></button></div>
-        <div className="header-actions"><span className="model-label"><span className="model-dot" />Pi / default</span><button className="icon-button" type="button" aria-label="More session actions"><Glyph name="dots" /></button></div>
-      </header>
-      <div className="conversation-scroll">
-        <section className="conversation-content">
-          <div className="conversation-intro"><span className="intro-kicker">PI DESKTOP / 01</span><h1>A better surface for<br /><em>agentic work.</em></h1><p>Use Pi as the kernel. Bring your skills, plugins, and workflow into one quiet workspace.</p></div>
-          <div className="message-list">
-            {messages.map((message) => <MessageBubble key={message.id} message={message} />)}
-            {running && <div className="thinking-row"><span className="thinking-icon"><Glyph name="bolt" size={14} /></span><span>Pi is thinking<span className="thinking-dots">...</span></span></div>}
+    <form className={`input-bar ${hero ? 'hero' : ''}`} onSubmit={onSubmit}>
+      <div className="card">
+        <textarea
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          placeholder={placeholder}
+          rows={hero ? 2 : 1}
+          aria-label="发送消息"
+          onKeyDown={(event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault()
+              event.currentTarget.form?.requestSubmit()
+            }
+          }}
+        />
+        <div className="card-row">
+          <div className="tools">
+            <button className="add" type="button" aria-label="添加附件"><IconPlus size={16} /></button>
+            <span className="mode-select" title="访问模式">
+              <IconShield size={14} /> 完全权限
+            </span>
           </div>
-          <div className="suggestion-row"><button type="button" onClick={() => setDraft('Review the current project and suggest the next safe improvement.')}>Review this project <span>R</span></button><button type="button" onClick={onOpenMarket}>Browse plugins <span><Glyph name="external" size={12} /></span></button></div>
-        </section>
-      </div>
-      <form className="composer-wrap" onSubmit={onSubmit}>
-        <div className="composer">
-          <textarea value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Ask Pi to do something..." rows={1} aria-label="Message Pi" onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} />
-          <div className="composer-bottom"><div className="composer-tools"><button type="button" className="composer-tool" aria-label="Attach files"><Glyph name="folder" size={15} /></button><span>Shift + Enter for a new line</span></div><button className="send-button" type="submit" disabled={running || draft.trim() === ''} aria-label="Send message"><Glyph name="send" size={16} /></button></div>
+          <div className="trailing">
+            <span className="model-select">Pi</span>
+            <button className="send" type="submit" disabled={running || draft.trim() === ''} aria-label="发送消息">
+              <IconArrowUp size={16} />
+            </button>
+          </div>
         </div>
-        <div className="composer-note">Pi can make changes to your workspace. Review tool actions before they run.</div>
-      </form>
-    </main>
+      </div>
+    </form>
   )
-}
-
-function MessageBubble({ message }: { readonly message: Message }) {
-  return <article className={`message message-${message.role}`}><div className="message-avatar">{message.role === 'assistant' ? <Glyph name="bolt" size={14} /> : 'Y'}</div><div className="message-body"><div className="message-meta"><strong>{message.role === 'assistant' ? 'Pi' : 'You'}</strong><span>{message.role === 'assistant' ? 'Assistant' : 'Just now'}</span></div><p>{message.text}</p></div></article>
-}
-
-function DetailsPanel({ status }: { readonly status: PiStatus }) {
-  return <aside className="details-panel"><div className="details-heading"><span>Session details</span><button className="icon-button" type="button" aria-label="Close details"><Glyph name="close" size={15} /></button></div><div className="details-card"><div className="detail-card-head"><span className="detail-icon"><Glyph name="bolt" size={15} /></span><div><strong>Pi runtime</strong><small>Primary agent kernel</small></div></div><StatusPill status={status} /><div className="detail-row"><span>Provider</span><strong>Configured locally</strong></div><div className="detail-row"><span>Workspace</span><strong className="detail-path">Current folder</strong></div></div><div className="details-section"><div className="details-section-title"><span>Loaded plugins</span><span className="section-count">1</span></div><div className="loaded-plugin"><span className="plugin-mini-icon"><Glyph name="box" size={14} /></span><span><strong>Code Review</strong><small>Skill / native</small></span><span className="loaded-dot" /></div></div><div className="details-section details-note"><div className="details-section-title"><span>Compatibility</span></div><p>Pi extensions load natively. DSH UI plugins will run through the compatibility adapter when enabled.</p><button className="text-button" type="button">Read the plugin guide <Glyph name="external" size={12} /></button></div></aside>
 }
 
 function MarketView({ onClose }: { readonly onClose: () => void }) {
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<'all' | 'installed'>('all')
   const [installed, setInstalled] = useState(() => new Set(starterMarketItems.filter((item) => item.installed).map((item) => item.id)))
-  const items = useMemo(() => starterMarketItems.filter((item) => (filter === 'all' || installed.has(item.id)) && `${item.name} ${item.description}`.toLowerCase().includes(query.toLowerCase())), [filter, installed, query])
+  const items = useMemo(
+    () => starterMarketItems.filter((item) => (filter === 'all' || installed.has(item.id)) && `${item.name} ${item.description}`.toLowerCase().includes(query.toLowerCase())),
+    [filter, installed, query],
+  )
   const toggleInstall = (item: MarketItem): void => {
     setInstalled((current) => {
       const next = new Set(current)
@@ -141,62 +431,107 @@ function MarketView({ onClose }: { readonly onClose: () => void }) {
       return next
     })
   }
-  const openMarket = (): void => { void window.pi?.openExternal(AISKILL_MARKET_URL) }
-  return <div className="overlay" role="dialog" aria-modal="true" aria-label="Plugin market"><button className="overlay-mask" type="button" aria-label="Close plugin market" onClick={onClose} /><section className="market-panel"><header className="market-header"><div><span className="intro-kicker">EXTEND PI</span><h1>Plugin market</h1><p>Skills, workflows, and compatible UI extensions for your agent workspace.</p></div><button className="icon-button" type="button" aria-label="Close plugin market" onClick={onClose}><Glyph name="close" /></button></header><div className="market-toolbar"><div className="market-tabs"><button className={filter === 'all' ? 'active' : ''} type="button" onClick={() => setFilter('all')}>Discover</button><button className={filter === 'installed' ? 'active' : ''} type="button" onClick={() => setFilter('installed')}>Installed <span>{installed.size}</span></button></div><label className="search-field"><Glyph name="search" size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search plugins" aria-label="Search plugins" /></label></div><div className="market-source"><span className="source-check"><Glyph name="bolt" size={13} /></span><span>Connected to <strong>aiskill.market</strong> for Skills and agent workflows.</span><button type="button" onClick={openMarket}>Open catalog <Glyph name="external" size={12} /></button></div><div className="market-grid">{items.map((item) => <MarketCard key={item.id} item={item} installed={installed.has(item.id)} onToggle={() => toggleInstall(item)} />)}</div>{items.length === 0 && <div className="empty-market"><Glyph name="search" size={22} /><strong>No plugins found</strong><span>Try a different search or browse the online catalog.</span></div>}</section></div>
+  return (
+    <div className="overlay" role="dialog" aria-modal="true" aria-label="插件市场">
+      <button className="overlay-mask" type="button" aria-label="关闭插件市场" onClick={onClose} />
+      <section className="panel">
+        <header className="panel-head">
+          <div>
+            <h1>插件市场</h1>
+            <p>技能、工作流，以及通过适配器或隔离宿主接入的 DSH UI 插件。</p>
+          </div>
+          <button className="icon-button" type="button" aria-label="关闭插件市场" onClick={onClose}><IconX /></button>
+        </header>
+        <div className="market-toolbar">
+          <div className="market-tabs">
+            <button className={filter === 'all' ? 'active' : ''} type="button" onClick={() => setFilter('all')}>发现</button>
+            <button className={filter === 'installed' ? 'active' : ''} type="button" onClick={() => setFilter('installed')}>已安装 {installed.size}</button>
+          </div>
+          <label className="search-field">
+            <IconSearch size={15} />
+            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索插件" aria-label="搜索插件" />
+          </label>
+        </div>
+        <div className="market-source">
+          <span>已连接到 <strong>aiskill.market</strong> 的技能与工作流目录。</span>
+          <button type="button" onClick={() => { void window.pi?.openExternal(AISKILL_MARKET_URL) }}>打开目录 <IconExternal size={12} /></button>
+        </div>
+        <div className="market-grid">
+          {items.map((item) => (
+            <article className="market-card" key={item.id}>
+              <div className="market-card-top">
+                <span className="market-glyph"><IconGrid size={16} /></span>
+                <div className="market-card-title">
+                  <strong>{item.name}</strong>
+                  <small>{item.kind === 'dsh-ui' ? 'DSH UI 插件' : `${item.kind} / ${item.source}`}</small>
+                </div>
+                {item.featured && <span className="featured">精选</span>}
+              </div>
+              <p>{item.description}</p>
+              <div className="market-card-bottom">
+                <span className={`compatibility compatibility-${item.compatibility}`}>
+                  {item.compatibility === 'native' ? 'Pi 原生' : item.compatibility === 'adapter' ? '适配器' : '隔离宿主'}
+                </span>
+                <button className={installed.has(item.id) ? 'installed-button' : 'install-button'} type="button" onClick={() => toggleInstall(item)}>
+                  {installed.has(item.id) ? '已安装' : '安装'}
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+        {items.length === 0 && <div className="empty-market"><strong>没有匹配的插件</strong><span>换个关键词，或打开在线目录。</span></div>}
+      </section>
+    </div>
+  )
 }
 
-function MarketCard({ item, installed, onToggle }: { readonly item: MarketItem; readonly installed: boolean; readonly onToggle: () => void }) {
-  return <article className="market-card"><div className="market-card-top"><span className={`market-glyph kind-${item.kind}`}><Glyph name={item.kind === 'skill' ? 'bolt' : item.kind === 'dsh-ui' ? 'panel' : 'box'} size={18} /></span><div className="market-card-title"><strong>{item.name}</strong><small>{item.kind === 'dsh-ui' ? 'DSH UI plugin' : `${item.kind[0].toUpperCase()}${item.kind.slice(1)} / ${item.source}`}</small></div>{item.featured && <span className="featured">Featured</span>}</div><p>{item.description}</p><div className="market-card-bottom"><span className={`compatibility compatibility-${item.compatibility}`}>{item.compatibility === 'native' ? 'Pi native' : item.compatibility === 'adapter' ? 'Adapter' : 'Isolated host'}</span><button className={installed ? 'installed-button' : 'install-button'} type="button" onClick={onToggle}>{installed ? 'Installed' : 'Install'}</button></div></article>
+function SettingsView({ status, onClose }: { readonly status: PiStatus; readonly onClose: () => void }) {
+  return (
+    <div className="overlay" role="dialog" aria-modal="true" aria-label="设置">
+      <button className="overlay-mask" type="button" aria-label="关闭设置" onClick={onClose} />
+      <section className="panel">
+        <header className="panel-head">
+          <div>
+            <h1>设置</h1>
+            <p>界面复刻 DeepSeek Harness。智能体内核仍是 Pi RPC，不会改动 Pi 核心。</p>
+          </div>
+          <button className="icon-button" type="button" aria-label="关闭设置" onClick={onClose}><IconX /></button>
+        </header>
+        <div className="settings-list">
+          <div className="setting-row">
+            <div>
+              <strong>Pi 可执行文件</strong>
+              <p>使用 <code>PI_DESKTOP_PI_BIN</code>，或从 PATH 解析 <code>pi</code>。</p>
+            </div>
+            <span className="setting-value">自动</span>
+          </div>
+          <div className="setting-row">
+            <div>
+              <strong>智能体模式</strong>
+              <p>提示通过 Pi 的 JSONL RPC 协议发送。</p>
+            </div>
+            <span className="setting-value">RPC</span>
+          </div>
+          <div className="setting-row">
+            <div>
+              <strong>运行状态</strong>
+              <p>{status.detail ?? '尚未启动 Pi 进程。'}</p>
+            </div>
+            <span className={`status-pill status-${status.state}`}><span className="status-dot" />{statusLabel(status)}</span>
+          </div>
+        </div>
+      </section>
+    </div>
+  )
 }
 
-function SettingsView({ status }: { readonly status: PiStatus }) {
-  return <section className="settings-view"><div className="settings-heading"><span className="intro-kicker">CONFIGURATION</span><h1>Settings</h1><p>Keep the desktop surface simple. Runtime choices stay explicit and local.</p></div><div className="settings-list"><div className="setting-row"><div><strong>Pi executable</strong><p>Uses <code>PI_DESKTOP_PI_BIN</code>, or resolves <code>pi</code> from PATH.</p></div><span className="setting-value">Auto</span></div><div className="setting-row"><div><strong>Agent mode</strong><p>Prompts are sent over Pi's JSONL RPC protocol.</p></div><span className="setting-value">RPC</span></div><div className="setting-row"><div><strong>Runtime status</strong><p>{status.detail ?? 'No Pi process has been started yet.'}</p></div><StatusPill status={status} /></div></div></section>
-}
-
-export function App() {
-  const [view, setView] = useState<View>('chat')
-  const [marketOpen, setMarketOpen] = useState(false)
-  const [draft, setDraft] = useState('')
-  const [running, setRunning] = useState(false)
-  const [status, setStatus] = useState<PiStatus>({ state: 'offline' })
-  const [messages, setMessages] = useState<readonly Message[]>(initialMessages)
-
-  useEffect(() => {
-    if (window.pi === undefined) return
-    void window.pi.getStatus().then(setStatus)
-    return window.pi.onEvent((event) => handlePiEvent(event, setMessages, setRunning, setStatus))
-  }, [])
-
-  const newSession = (): void => {
-    setView('chat')
-    setMessages(initialMessages)
-    setDraft('')
-  }
-
-  const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
-    event.preventDefault()
-    const text = draft.trim()
-    if (text === '' || running) return
-    setDraft('')
-    setMessages((current) => [...current, { id: `user-${Date.now()}`, role: 'user', text }])
-    setRunning(true)
-    if (window.pi === undefined) {
-      setMessages((current) => [...current, { id: `offline-${Date.now()}`, role: 'assistant', text: 'Preview mode is active. Launch the Electron app and configure Pi to send a live prompt.' }])
-      setRunning(false)
-      return
-    }
-    const result = await window.pi.prompt(text)
-    setStatus(await window.pi.getStatus())
-    if (!result.accepted) {
-      setMessages((current) => [...current, { id: `error-${Date.now()}`, role: 'assistant', text: result.error ?? 'Pi rejected the prompt.' }])
-      setRunning(false)
-    }
-  }
-
-  return <div className="app-shell"><Sidebar view={view} setView={setView} onNewSession={newSession} />{view === 'chat' && <Conversation messages={messages} running={running} draft={draft} setDraft={setDraft} onSubmit={submit} onOpenMarket={() => setMarketOpen(true)} />}{view === 'settings' && <SettingsView status={status} />}{view === 'market' && <MarketView onClose={() => setView('chat')} />}<DetailsPanel status={status} />{marketOpen && <MarketView onClose={() => setMarketOpen(false)} />}</div>
-}
-
-function handlePiEvent(event: PiRpcEvent, setMessages: (update: (current: readonly Message[]) => readonly Message[]) => void, setRunning: (value: boolean) => void, setStatus: (status: PiStatus) => void): void {
+function handlePiEvent(
+  event: PiRpcEvent,
+  setSessions: (update: (current: readonly Session[]) => readonly Session[]) => void,
+  activeId: string,
+  setRunning: (value: boolean) => void,
+  setStatus: (status: PiStatus) => void,
+): void {
   if (event.type === 'agent_start') { setRunning(true); setStatus({ state: 'ready' }); return }
   if (event.type === 'agent_end' || event.type === 'agent_settled') { setRunning(false); return }
   if (event.type !== 'message_update') return
@@ -205,9 +540,12 @@ function handlePiEvent(event: PiRpcEvent, setMessages: (update: (current: readon
   const typedDelta = delta as { readonly type?: unknown; readonly delta?: unknown }
   const deltaText = typedDelta.delta
   if (typedDelta.type !== 'text_delta' || typeof deltaText !== 'string') return
-  setMessages((current) => {
-    const last = current[current.length - 1]
-    if (last?.role === 'assistant' && last.id === 'streaming') return [...current.slice(0, -1), { ...last, text: last.text + deltaText }]
-    return [...current, { id: 'streaming', role: 'assistant', text: deltaText }]
-  })
+  setSessions((current) => current.map((session) => {
+    if (session.id !== activeId) return session
+    const last = session.messages[session.messages.length - 1]
+    const messages = last?.role === 'assistant' && last.id === 'streaming'
+      ? [...session.messages.slice(0, -1), { ...last, text: last.text + deltaText }]
+      : [...session.messages, { id: 'streaming', role: 'assistant' as const, text: deltaText }]
+    return { ...session, messages, updatedAt: Date.now() }
+  }))
 }
