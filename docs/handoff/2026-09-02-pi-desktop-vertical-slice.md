@@ -93,14 +93,26 @@ Passed in the project root:
 python -m pytest           # 2 passed
 ```
 
-The outer directory rename was verified with the old path absent and the new path present.
+Passed after the DeepSeek UI restore (`pi-desktop/`):
 
-The target repository was clean before this integration; the `deepseek-harness` submodule remains unchanged.
+```text
+npm install
+npm run typecheck
+npm run build
+npx vite --host 127.0.0.1 --port 5173
+```
+
+Browser check of the renderer (offline preview, no Electron/Pi process):
+
+- Empty hero: `deepseek` + HARNESS, 新会话, 工作区, 探索未至之境 / 预览版, round blue send.
+- 插件市场 and 设置 overlays open and close without the previous lime accent.
+- Sending `你好` switches to chat: right-aligned user bubble, 对话 / 轨迹 tabs, offline assistant reply.
+- Sidebar collapse to the rail, then 新会话 returns to the hero.
 
 Still not run for this slice:
 
 - Live Pi prompt with a configured provider/API key.
-- Full Electron UI interaction test.
+- Full Electron window chrome (title-bar overlay) on Windows/macOS.
 
 ## Intentionally Untouched
 
