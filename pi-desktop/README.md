@@ -1,6 +1,6 @@
 # Pi Desktop
 
-An independent Electron desktop client with a DSH-inspired three-panel UI and Pi as its agent kernel.
+An independent Electron desktop client. The window chrome mirrors DeepSeek Harness. The agent kernel is Pi RPC, not the DSH runtime.
 
 ## Run
 
