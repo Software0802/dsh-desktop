@@ -81,6 +81,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 textarea { resize: none; }
 
 .app-shell {
+  position: relative;
   display: flex;
   width: 100%;
   height: 100%;
@@ -132,6 +133,15 @@ textarea { resize: none; }
   color: var(--dsw-alias-label-secondary);
 }
 .icon-button:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.icon-button:disabled,
+.chip:disabled,
+.add:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.icon-button:disabled:hover { background: transparent; }
+.chip:disabled:hover { background: transparent; }
+.add:disabled:hover { background: var(--dsw-specific-selector); }
 
 .new-session {
   display: flex;
@@ -672,15 +682,14 @@ textarea { resize: none; }
   border-bottom: 0.5px solid var(--dsw-alias-border-l2);
 }
 .market-tabs { display: flex; gap: 28px; }
-.market-tabs button {
+.market-tabs .active {
   position: relative;
   padding: 4px 0 10px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-state-business-primary);
   font-size: 13px;
   font-weight: 500;
 }
-.market-tabs button.active { color: var(--dsw-alias-state-business-primary); }
-.market-tabs button.active::after {
+.market-tabs .active::after {
   content: "";
   position: absolute;
   right: 0;
@@ -750,16 +759,11 @@ textarea { resize: none; }
 .compatibility { color: var(--dsw-alias-label-caption); font-size: 12px; }
 .compatibility-native { color: var(--dsw-alias-state-success-primary); }
 .compatibility-adapter { color: var(--dsw-alias-state-business-primary); }
-.install-button, .installed-button {
-  min-width: 64px;
-  padding: 6px 10px;
-  border-radius: 8px;
+.preview-action {
+  color: var(--dsw-alias-label-tertiary);
   font-size: 12px;
   font-weight: 500;
 }
-.install-button { background: var(--dsw-alias-button-info-fill); color: #fff; }
-.install-button:hover { background: var(--dsw-alias-button-info-hover); }
-.installed-button { border: 0.5px solid var(--dsw-alias-border-l3); color: var(--dsw-alias-label-secondary); }
 .empty-market { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 48px 0; color: var(--dsw-alias-label-tertiary); }
 
 .settings-list { margin-top: 20px; border-top: 0.5px solid var(--dsw-alias-border-l2); }
@@ -808,6 +812,14 @@ textarea { resize: none; }
     padding: 0;
     border-color: transparent;
     background: transparent;
+  }
+  .sidebar.force-wide {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 5;
+    width: var(--dsh-sidebar-width);
+    box-shadow: var(--dsw-elevation-soft);
   }
 }
 @media (max-width: 720px) {

@@ -1,9 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { FormEvent, MutableRefObject } from 'react'
 import {
   AISKILL_MARKET_URL,
   starterMarketItems,
-  type MarketItem,
   type PiRpcEvent,
   type PiStatus,
 } from '../shared/types.js'
@@ -41,11 +40,22 @@ type Session = {
   readonly messages: readonly Message[]
   readonly updatedAt: number
 }
+type InflightTurn = {
+  readonly sessionId: string
+  readonly assistantId: string
+}
+type SessionSetter = (update: (current: readonly Session[]) => readonly Session[]) => void
 
 const WORKSPACE = 'dsh'
+const NARROW_SIDEBAR = '(max-width: 1024px)'
+const UNAVAILABLE = '尚未实现'
 
 function newSessionId(): string {
   return `session-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`
+}
+
+function newMessageId(role: 'user' | 'assistant', sessionId: string): string {
+  return `${role}-${sessionId}-${Date.now()}-${Math.random().toString(16).slice(2, 6)}`
 }
 
 function emptySession(): Session {
@@ -71,8 +81,14 @@ function titleFromPrompt(text: string): string {
   return line.length > 18 ? `${line.slice(0, 18)}…` : line
 }
 
+function patchSession(setSessions: SessionSetter, sessionId: string, update: (session: Session) => Session): void {
+  setSessions((current) => current.map((session) => (session.id === sessionId ? update(session) : session)))
+}
+
 export function App() {
   const [collapsed, setCollapsed] = useState(false)
+  const [forceWide, setForceWide] = useState(false)
+  const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW_SIDEBAR).matches)
   const [overlay, setOverlay] = useState<Overlay>(null)
   const [tab, setTab] = useState<ChatTab>('chat')
   const [draft, setDraft] = useState('')
@@ -85,21 +101,45 @@ export function App() {
   const [activeId, setActiveId] = useState(seed.id)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [liked, setLiked] = useState<Readonly<Record<string, 'up' | 'down'>>>({})
+  const inflightRef = useRef<InflightTurn | null>(null)
 
   const active = sessions.find((session) => session.id === activeId) ?? sessions[0]
   const messages = active?.messages ?? []
   const isHero = messages.length === 0
+  const sidebarExpanded = narrow ? forceWide : !collapsed
+
+  useEffect(() => {
+    const media = window.matchMedia(NARROW_SIDEBAR)
+    const sync = (): void => {
+      setNarrow(media.matches)
+      if (!media.matches) setForceWide(false)
+    }
+    sync()
+    media.addEventListener('change', sync)
+    return () => media.removeEventListener('change', sync)
+  }, [])
 
   useEffect(() => {
     if (window.pi === undefined) return
     void window.pi.getStatus().then(setStatus)
-    return window.pi.onEvent((event) => handlePiEvent(event, setSessions, activeId, setRunning, setStatus))
-  }, [activeId])
+    return window.pi.onEvent((event) => handlePiEvent(event, setSessions, inflightRef, setRunning, setStatus))
+  }, [])
 
   const visibleSessions = useMemo(
     () => sessions.filter((session) => session.title.toLowerCase().includes(query.trim().toLowerCase())),
     [query, sessions],
   )
+
+  const toggleSidebar = (): void => {
+    if (narrow) {
+      setForceWide((value) => {
+        if (!value) setCollapsed(false)
+        return !value
+      })
+      return
+    }
+    setCollapsed((value) => !value)
+  }
 
   const createSession = (): void => {
     const session = emptySession()
@@ -129,28 +169,28 @@ export function App() {
     })
   }
 
-  const patchActive = (update: (session: Session) => Session): void => {
-    setSessions((current) => current.map((session) => (session.id === activeId ? update(session) : session)))
-  }
-
   const submit = async (event: FormEvent<HTMLFormElement>): Promise<void> => {
     event.preventDefault()
     const text = draft.trim()
-    if (text === '' || running || active === undefined) return
+    const sessionId = active?.id
+    if (text === '' || running || sessionId === undefined) return
+    const assistantId = newMessageId('assistant', sessionId)
     setDraft('')
     setTab('chat')
-    patchActive((session) => ({
+    patchSession(setSessions, sessionId, (session) => ({
       ...session,
       title: session.messages.length === 0 ? titleFromPrompt(text) : session.title,
-      messages: [...session.messages, { id: `user-${Date.now()}`, role: 'user', text }],
+      messages: [...session.messages, { id: newMessageId('user', sessionId), role: 'user', text }],
       updatedAt: Date.now(),
     }))
+    inflightRef.current = { sessionId, assistantId }
     setRunning(true)
     if (window.pi === undefined) {
-      patchActive((session) => ({
+      inflightRef.current = null
+      patchSession(setSessions, sessionId, (session) => ({
         ...session,
         messages: [...session.messages, {
-          id: `offline-${Date.now()}`,
+          id: assistantId,
           role: 'assistant',
           text: '当前是预览模式。启动 Electron 应用并配置 Pi 后即可发送真实请求。',
         }],
@@ -162,9 +202,10 @@ export function App() {
     const result = await window.pi.prompt(text)
     setStatus(await window.pi.getStatus())
     if (!result.accepted) {
-      patchActive((session) => ({
+      inflightRef.current = null
+      patchSession(setSessions, sessionId, (session) => ({
         ...session,
-        messages: [...session.messages, { id: `error-${Date.now()}`, role: 'assistant', text: result.error ?? 'Pi 拒绝了这次请求。' }],
+        messages: [...session.messages, { id: assistantId, role: 'assistant', text: result.error ?? 'Pi 拒绝了这次请求。' }],
         updatedAt: Date.now(),
       }))
       setRunning(false)
@@ -189,13 +230,18 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
+      <aside className={`sidebar ${collapsed && !forceWide ? 'collapsed' : ''} ${forceWide ? 'force-wide' : ''}`}>
         <div className="logo-row">
           <button className="brand" type="button" onClick={createSession} aria-label="deepseek">
-            {collapsed ? <FishLogo size={24} /> : <BrandWordmark size={18} />}
+            {sidebarExpanded ? <BrandWordmark size={18} /> : <FishLogo size={24} />}
           </button>
-          <button className="icon-button toggle" type="button" aria-label={collapsed ? '展开侧栏' : '收起侧栏'} onClick={() => setCollapsed((value) => !value)}>
-            {collapsed ? <FishLogo size={22} /> : <IconPanelLeft size={16} />}
+          <button
+            className="icon-button toggle"
+            type="button"
+            aria-label={sidebarExpanded ? '收起侧栏' : '展开侧栏'}
+            onClick={toggleSidebar}
+          >
+            {sidebarExpanded ? <IconPanelLeft size={16} /> : <FishLogo size={22} />}
           </button>
         </div>
         <button className="new-session" type="button" onClick={createSession}>
@@ -218,8 +264,8 @@ export function App() {
             ) : (
               <button className="icon-button" type="button" aria-label="搜索" onClick={() => setSearchOpen(true)}><IconSearch size={16} /></button>
             )}
-            <button className="icon-button" type="button" aria-label="筛选"><IconFilter size={16} /></button>
-            <button className="icon-button" type="button" aria-label="新建文件夹"><IconFolderPlus size={16} /></button>
+            <button className="icon-button" type="button" disabled title={UNAVAILABLE} aria-label={`筛选（${UNAVAILABLE}）`}><IconFilter size={16} /></button>
+            <button className="icon-button" type="button" disabled title={UNAVAILABLE} aria-label={`新建文件夹（${UNAVAILABLE}）`}><IconFolderPlus size={16} /></button>
           </div>
           <div className="tree">
             <div className="project-row">
@@ -266,7 +312,7 @@ export function App() {
               <span className="session-title">{active?.title ?? '新会话'}</span>
               <span className="mode-chip">标准模式</span>
               <div className="header-actions">
-                <button className="icon-button" type="button" aria-label="导出会话"><IconDownload size={16} /></button>
+                <button className="icon-button" type="button" disabled title={UNAVAILABLE} aria-label={`导出会话（${UNAVAILABLE}）`}><IconDownload size={16} /></button>
               </div>
             </div>
             <div className="tabs">
@@ -287,8 +333,12 @@ export function App() {
                     <span className="preview-badge">预览版</span>
                   </div>
                   <div className="hero-chips">
-                    <button className="chip" type="button"><IconFolder size={14} /><span>{WORKSPACE}</span><span className="muted">▾</span></button>
-                    <button className="chip" type="button"><span>标准模式</span><span className="muted">▾</span></button>
+                    <button className="chip" type="button" disabled title={UNAVAILABLE} aria-label={`工作区（${UNAVAILABLE}）`}>
+                      <IconFolder size={14} /><span>{WORKSPACE}</span><span className="muted">▾</span>
+                    </button>
+                    <button className="chip" type="button" disabled title={UNAVAILABLE} aria-label={`模式（${UNAVAILABLE}）`}>
+                      <span>标准模式</span><span className="muted">▾</span>
+                    </button>
                   </div>
                   <Composer
                     hero
@@ -398,7 +448,7 @@ function Composer({
         />
         <div className="card-row">
           <div className="tools">
-            <button className="add" type="button" aria-label="添加附件"><IconPlus size={16} /></button>
+            <button className="add" type="button" disabled title={UNAVAILABLE} aria-label={`添加附件（${UNAVAILABLE}）`}><IconPlus size={16} /></button>
             <span className="mode-select" title="访问模式">
               <IconShield size={14} /> 完全权限
             </span>
@@ -417,20 +467,10 @@ function Composer({
 
 function MarketView({ onClose }: { readonly onClose: () => void }) {
   const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState<'all' | 'installed'>('all')
-  const [installed, setInstalled] = useState(() => new Set(starterMarketItems.filter((item) => item.installed).map((item) => item.id)))
   const items = useMemo(
-    () => starterMarketItems.filter((item) => (filter === 'all' || installed.has(item.id)) && `${item.name} ${item.description}`.toLowerCase().includes(query.toLowerCase())),
-    [filter, installed, query],
+    () => starterMarketItems.filter((item) => `${item.name} ${item.description}`.toLowerCase().includes(query.toLowerCase())),
+    [query],
   )
-  const toggleInstall = (item: MarketItem): void => {
-    setInstalled((current) => {
-      const next = new Set(current)
-      if (next.has(item.id)) next.delete(item.id)
-      else next.add(item.id)
-      return next
-    })
-  }
   return (
     <div className="overlay" role="dialog" aria-modal="true" aria-label="插件市场">
       <button className="overlay-mask" type="button" aria-label="关闭插件市场" onClick={onClose} />
@@ -438,14 +478,13 @@ function MarketView({ onClose }: { readonly onClose: () => void }) {
         <header className="panel-head">
           <div>
             <h1>插件市场</h1>
-            <p>技能、工作流，以及通过适配器或隔离宿主接入的 DSH UI 插件。</p>
+            <p>预览目录，不是安装器。技能、工作流，以及通过适配器或隔离宿主接入的 DSH UI 插件。</p>
           </div>
           <button className="icon-button" type="button" aria-label="关闭插件市场" onClick={onClose}><IconX /></button>
         </header>
         <div className="market-toolbar">
           <div className="market-tabs">
-            <button className={filter === 'all' ? 'active' : ''} type="button" onClick={() => setFilter('all')}>发现</button>
-            <button className={filter === 'installed' ? 'active' : ''} type="button" onClick={() => setFilter('installed')}>已安装 {installed.size}</button>
+            <span className="active">发现</span>
           </div>
           <label className="search-field">
             <IconSearch size={15} />
@@ -453,7 +492,7 @@ function MarketView({ onClose }: { readonly onClose: () => void }) {
           </label>
         </div>
         <div className="market-source">
-          <span>已连接到 <strong>aiskill.market</strong> 的技能与工作流目录。</span>
+          <span>本地预览条目。打开 <strong>aiskill.market</strong> 查看外部目录，当前不会安装插件。</span>
           <button type="button" onClick={() => { void window.pi?.openExternal(AISKILL_MARKET_URL) }}>打开目录 <IconExternal size={12} /></button>
         </div>
         <div className="market-grid">
@@ -472,9 +511,7 @@ function MarketView({ onClose }: { readonly onClose: () => void }) {
                 <span className={`compatibility compatibility-${item.compatibility}`}>
                   {item.compatibility === 'native' ? 'Pi 原生' : item.compatibility === 'adapter' ? '适配器' : '隔离宿主'}
                 </span>
-                <button className={installed.has(item.id) ? 'installed-button' : 'install-button'} type="button" onClick={() => toggleInstall(item)}>
-                  {installed.has(item.id) ? '已安装' : '安装'}
-                </button>
+                <span className="preview-action">预览</span>
               </div>
             </article>
           ))}
@@ -527,25 +564,38 @@ function SettingsView({ status, onClose }: { readonly status: PiStatus; readonly
 
 function handlePiEvent(
   event: PiRpcEvent,
-  setSessions: (update: (current: readonly Session[]) => readonly Session[]) => void,
-  activeId: string,
+  setSessions: SessionSetter,
+  inflightRef: MutableRefObject<InflightTurn | null>,
   setRunning: (value: boolean) => void,
   setStatus: (status: PiStatus) => void,
 ): void {
   if (event.type === 'agent_start') { setRunning(true); setStatus({ state: 'ready' }); return }
-  if (event.type === 'agent_end' || event.type === 'agent_settled') { setRunning(false); return }
+  if (event.type === 'agent_end' || event.type === 'agent_settled') {
+    inflightRef.current = null
+    setRunning(false)
+    return
+  }
   if (event.type !== 'message_update') return
+  const inflight = inflightRef.current
+  if (inflight === null) return
   const delta = event.assistantMessageEvent
   if (delta === null || typeof delta !== 'object') return
   const typedDelta = delta as { readonly type?: unknown; readonly delta?: unknown }
   const deltaText = typedDelta.delta
   if (typedDelta.type !== 'text_delta' || typeof deltaText !== 'string') return
   setSessions((current) => current.map((session) => {
-    if (session.id !== activeId) return session
-    const last = session.messages[session.messages.length - 1]
-    const messages = last?.role === 'assistant' && last.id === 'streaming'
-      ? [...session.messages.slice(0, -1), { ...last, text: last.text + deltaText }]
-      : [...session.messages, { id: 'streaming', role: 'assistant' as const, text: deltaText }]
+    if (session.id !== inflight.sessionId) return session
+    const index = session.messages.findIndex((message) => message.id === inflight.assistantId)
+    if (index === -1) {
+      return {
+        ...session,
+        messages: [...session.messages, { id: inflight.assistantId, role: 'assistant', text: deltaText }],
+        updatedAt: Date.now(),
+      }
+    }
+    const messages = session.messages.map((message, messageIndex) => (
+      messageIndex === index ? { ...message, text: message.text + deltaText } : message
+    ))
     return { ...session, messages, updatedAt: Date.now() }
   }))
 }
