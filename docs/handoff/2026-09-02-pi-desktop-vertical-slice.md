@@ -124,4 +124,4 @@ Still not run for this slice:
 
 ## Next Move
 
-Keep Pi session persistence as Priority 1. The desktop chrome now follows DeepSeek Harness; do not restyle it toward a custom editorial theme. After durable sessions, replace the starter market catalog with a verified `aiskill.market` adapter, keeping DSH UI plugin execution behind an adapter or isolated-host boundary.
+Superseded by [2026-09-02 Desktop client direction](./2026-09-02-desktop-client.md). The product is the Electron desktop client. RPC is a kernel socket, not the next milestone.

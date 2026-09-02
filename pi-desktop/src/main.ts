@@ -127,8 +127,16 @@ class PiRpcClient {
   }
 }
 
+const PRODUCT_NAME = 'deepseek'
+
 let mainWindow: BrowserWindow | null = null
 const pi = new PiRpcClient()
+
+function revealWindow(window: BrowserWindow): void {
+  if (window.isMinimized()) window.restore()
+  window.show()
+  window.focus()
+}
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -136,8 +144,10 @@ function createWindow(): void {
     height: 900,
     minWidth: 900,
     minHeight: 620,
+    show: false,
+    autoHideMenuBar: true,
     backgroundColor: '#151517',
-    title: 'deepseek',
+    title: PRODUCT_NAME,
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#151517', symbolColor: '#f9fafb', height: 36 },
     webPreferences: {
@@ -146,7 +156,10 @@ function createWindow(): void {
       preload: join(__dirname, 'preload.js'),
     },
   })
-  mainWindow.loadFile(join(__dirname, '..', 'dist', 'index.html'))
+  void mainWindow.loadFile(join(__dirname, '..', 'dist', 'index.html'))
+  mainWindow.once('ready-to-show', () => {
+    if (mainWindow !== null) revealWindow(mainWindow)
+  })
   mainWindow.on('closed', () => { mainWindow = null })
 }
 
@@ -163,13 +176,21 @@ ipcMain.handle('market:open', (_event, url: unknown) => {
   return true
 })
 
-app.whenReady().then(() => {
-  createWindow()
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+if (!app.requestSingleInstanceLock()) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow !== null) revealWindow(mainWindow)
   })
-})
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
-})
+  app.setName(PRODUCT_NAME)
+  if (process.platform === 'win32') app.setAppUserModelId('pi-desktop')
+  void app.whenReady().then(() => {
+    createWindow()
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
+  })
+  app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') app.quit()
+  })
+}

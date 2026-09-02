@@ -4,6 +4,7 @@ This directory is the project status index for handing work between sessions.
 
 ## Current Handoff
 
+- [2026-09-02 Desktop client direction](./2026-09-02-desktop-client.md)
 - [2026-09-02 Pi Desktop vertical slice](./2026-09-02-pi-desktop-vertical-slice.md)
 
 ## Required Sections

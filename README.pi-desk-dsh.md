@@ -15,7 +15,7 @@ The improver never changes the active skill directly. A proposal must be applied
 
 ## Desktop Client
 
-`pi-desktop/` is an independent Electron + React + TypeScript client. The UI follows the DeepSeek Harness desktop chrome; the agent kernel is Pi (`pi --mode rpc`). The renderer stays behind a preload IPC bridge and remains usable in offline preview mode before Pi is available.
+`pi-desktop/` is the Electron desktop client. The window follows DeepSeek Harness chrome; the agent kernel is Pi (`pi --mode rpc`), not a copied DSH runtime.
 
 ```powershell
 cd pi-desktop
